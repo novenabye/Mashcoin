@@ -1,129 +1,150 @@
-// Copyright (c) 2011-2016 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+cmake_minimum_required(VERSION 2.8.6)
 
-#pragma once
+set(VERSION "0.1")
+# $Format:Packaged from commit %H%nset(COMMIT %h)%nset(REFS "%d")$
 
-#include <cstdint>
-#include <initializer_list>
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set(CMAKE_CONFIGURATION_TYPES Debug RelWithDebInfo Release CACHE TYPE INTERNAL)
+set(CMAKE_SKIP_INSTALL_RULES ON)
+set(CMAKE_SKIP_PACKAGE_ALL_DEPENDENCY ON)
+set(CMAKE_SUPPRESS_REGENERATION ON)
+enable_testing()
+# copy CTestCustom.cmake to build dir to disable long running tests in 'make test'
+configure_file(${CMAKE_SOURCE_DIR}/CTestCustom.cmake ${CMAKE_BINARY_DIR})
 
-namespace CryptoNote {
-namespace parameters {
+project(CryptoNote)
 
-const uint64_t CRYPTONOTE_MAX_BLOCK_NUMBER                   = 500000000;
-const size_t   CRYPTONOTE_MAX_BLOCK_BLOB_SIZE                = 500000000;
-const size_t   CRYPTONOTE_MAX_TX_SIZE                        = 1000000000;
-//TODO Currency-specific address prefix
-const uint64_t CRYPTONOTE_PUBLIC_ADDRESS_BASE58_PREFIX       = ;
-//TODO Choose maturity period for your currency
-const size_t   CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW          = 60;
-const uint64_t CRYPTONOTE_BLOCK_FUTURE_TIME_LIMIT            = 60 * 60 * 2;
+include_directories(include src external "${CMAKE_BINARY_DIR}/version")
+if(APPLE)
+  include_directories(SYSTEM /usr/include/malloc)
+  enable_language(ASM)
+endif()
 
-const size_t   BLOCKCHAIN_TIMESTAMP_CHECK_WINDOW             = 60;
+if(MSVC)
+include_directories(src/Platform/Windows)
+elseif(APPLE)
+include_directories(src/Platform/OSX)
+else()
+include_directories(src/Platform/Linux)
+endif()
 
-//TODO Specify total number of available coins
-//TODO ((uint64_t)(-1)) equals to 18446744073709551616 coins
-//TODO or you can define number explicitly UINT64_C(858986905600000000)
-const uint64_t MONEY_SUPPLY                                  = ;
-const unsigned EMISSION_SPEED_FACTOR                         = 18;
-static_assert(EMISSION_SPEED_FACTOR <= 8 * sizeof(uint64_t), "Bad EMISSION_SPEED_FACTOR");
+set(STATIC ${MSVC} CACHE BOOL "Link libraries statically")
 
-//TODO Define number of blocks for block size median calculation
-const size_t   CRYPTONOTE_REWARD_BLOCKS_WINDOW               = 100;
-const size_t   CRYPTONOTE_BLOCK_GRANTED_FULL_REWARD_ZONE     = 10000; //size of block (bytes) after which reward for block calculated using block size
-const size_t   CRYPTONOTE_COINBASE_BLOB_RESERVED_SIZE        = 600;
-//TODO Define number of digits
-const size_t   CRYPTONOTE_DISPLAY_DECIMAL_POINT              = 8;
-//TODO Define minimum fee for transactions
-const uint64_t MINIMUM_FEE                                   = ;
-const uint64_t DEFAULT_DUST_THRESHOLD                        = MINIMUM_FEE;
+if(MSVC)
+  add_definitions("/bigobj /MP /W3 /GS- /D_CRT_SECURE_NO_WARNINGS /wd4996 /wd4345 /D_WIN32_WINNT=0x0600 /DWIN32_LEAN_AND_MEAN /DGTEST_HAS_TR1_TUPLE=0 /D_VARIADIC_MAX=8 /D__SSE4_1__")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:10485760")
+  if(STATIC)
+    foreach(VAR CMAKE_C_FLAGS_DEBUG CMAKE_CXX_FLAGS_DEBUG CMAKE_C_FLAGS_RELWITHDEBINFO CMAKE_CXX_FLAGS_RELWITHDEBINFO CMAKE_C_FLAGS_RELEASE CMAKE_CXX_FLAGS_RELEASE)
+      string(REPLACE "/MD" "/MT" ${VAR} "${${VAR}}")
+    endforeach()
+  endif()
+  include_directories(SYSTEM src/platform/msc)
+else()
+  if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    # This option has no effect in glibc version less than 2.20. 
+    # Since glibc 2.20 _BSD_SOURCE is deprecated, this macro is recomended instead
+    add_definitions("-D_DEFAULT_SOURCE -D_GNU_SOURCE")
+  endif()
+  set(ARCH native CACHE STRING "CPU to build for: -march value or default")
+  if("${ARCH}" STREQUAL "default")
+    set(ARCH_FLAG "")
+  else()
+    set(ARCH_FLAG "-march=${ARCH}")
+  endif()
+  set(WARNINGS "-Wall -Wextra -Wpointer-arith -Wundef -Wvla -Wwrite-strings -Werror -Wno-error=extra -Wno-error=unused-function -Wno-error=deprecated-declarations -Wno-error=sign-compare -Wno-error=strict-aliasing -Wno-error=type-limits -Wno-unused-parameter -Wno-error=unused-variable -Wno-error=undef -Wno-error=uninitialized -Wno-error=unused-result")
+  if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    set(WARNINGS "${WARNINGS} -Wno-error=mismatched-tags -Wno-error=null-conversion -Wno-overloaded-shift-op-parentheses -Wno-error=shift-count-overflow -Wno-error=tautological-constant-out-of-range-compare -Wno-error=unused-private-field -Wno-error=unneeded-internal-declaration -Wno-error=unused-function")
+  else()
+    set(WARNINGS "${WARNINGS} -Wlogical-op -Wno-error=maybe-uninitialized -Wno-error=clobbered -Wno-error=unused-but-set-variable")
+  endif()
+  if(MINGW)
+    set(WARNINGS "${WARNINGS} -Wno-error=unused-value")
+    set(MINGW_FLAG "-DWIN32_LEAN_AND_MEAN")
+    include_directories(SYSTEM src/platform/mingw)
+  else()
+    set(MINGW_FLAG "")
+  endif()
+  if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT (CMAKE_C_COMPILER_VERSION VERSION_LESS 5.1))
+    set(WARNINGS "${WARNINGS} -Wno-error=odr")
+  endif()
+  set(C_WARNINGS "-Waggregate-return -Wnested-externs -Wold-style-definition -Wstrict-prototypes")
+  set(CXX_WARNINGS "-Wno-reorder -Wno-missing-field-initializers")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 ${MINGW_FLAG} ${WARNINGS} ${C_WARNINGS} ${ARCH_FLAG} -maes")
+  if(NOT APPLE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+  endif()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 ${MINGW_FLAG} ${WARNINGS} ${CXX_WARNINGS} ${ARCH_FLAG} -maes")
+  if(APPLE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DGTEST_HAS_TR1_TUPLE=0")
+  endif()
+  if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT (CMAKE_C_COMPILER_VERSION VERSION_LESS 4.8))
+    set(DEBUG_FLAGS "-g3 -Og")
+  else()
+    set(DEBUG_FLAGS "-g3 -O0")
+  endif()
+  set(RELEASE_FLAGS "-Ofast -DNDEBUG -Wno-unused-variable")
+  if(NOT APPLE)
+    # There is a clang bug that does not allow to compile code that uses AES-NI intrinsics if -flto is enabled
+    if (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_SYSTEM_NAME STREQUAL "Linux" 
+        AND CMAKE_BUILD_TYPE STREQUAL "Release" AND ((CMAKE_C_COMPILER_VERSION VERSION_GREATER 4.9) OR (CMAKE_C_COMPILER_VERSION VERSION_EQUAL 4.9)))
+      # On linux, to build in lto mode, check that ld.gold linker is used: 'update-alternatives --install /usr/bin/ld ld /usr/bin/ld.gold HIGHEST_PRIORITY'
+      set(CMAKE_AR gcc-ar)
+      set(CMAKE_RANLIB gcc-ranlib)
+    endif()
+    set(RELEASE_FLAGS "${RELEASE_FLAGS} -flto")
+  endif()
+  #if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT MINGW)
+  #  set(RELEASE_FLAGS "${RELEASE_FLAGS} -fno-fat-lto-objects")
+  #endif()
+  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} ${DEBUG_FLAGS}")
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${DEBUG_FLAGS}")
+  set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${RELEASE_FLAGS}")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${RELEASE_FLAGS}")
+  if(STATIC AND NOT APPLE)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
+  endif()
+endif()
 
-//TODO Define preferred block's target time
-const uint64_t DIFFICULTY_TARGET                             = 120; // seconds
-const uint64_t EXPECTED_NUMBER_OF_BLOCKS_PER_DAY             = 24 * 60 * 60 / DIFFICULTY_TARGET;
-//TODO There are options to tune CryptoNote's difficulty retargeting function.
-//TODO We recommend not to change it.
-const size_t   DIFFICULTY_WINDOW                             = EXPECTED_NUMBER_OF_BLOCKS_PER_DAY; // blocks
-const size_t   DIFFICULTY_CUT                                = 60;  // timestamps to cut after sorting
-const size_t   DIFFICULTY_LAG                                = 15;
-static_assert(2 * DIFFICULTY_CUT <= DIFFICULTY_WINDOW - 2, "Bad DIFFICULTY_WINDOW or DIFFICULTY_CUT");
+if(STATIC)
+  set(Boost_USE_STATIC_LIBS ON)
+  set(Boost_USE_STATIC_RUNTIME ON)
+endif()
+find_package(Boost 1.55 REQUIRED COMPONENTS system filesystem thread date_time chrono regex serialization program_options)
+include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
+if(MINGW)
+  set(Boost_LIBRARIES "${Boost_LIBRARIES};ws2_32;mswsock")
+elseif(APPLE)
+  set(Boost_LIBRARIES "${Boost_LIBRARIES}")
+elseif(NOT MSVC)
+  set(Boost_LIBRARIES "${Boost_LIBRARIES};rt")
+endif()
 
-const size_t   MAX_BLOCK_SIZE_INITIAL                        =  20 * 1024;
-const uint64_t MAX_BLOCK_SIZE_GROWTH_SPEED_NUMERATOR         = 100 * 1024;
-const uint64_t MAX_BLOCK_SIZE_GROWTH_SPEED_DENOMINATOR       = 365 * 24 * 60 * 60 / DIFFICULTY_TARGET;
+set(COMMIT_ID_IN_VERSION ON CACHE BOOL "Include commit ID in version")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/version")
+if (NOT COMMIT_ID_IN_VERSION)
+  set(VERSION "${VERSION}-unknown")
+  configure_file("src/version.h.in" "version/version.h")
+  add_custom_target(version ALL)
+elseif(DEFINED COMMIT)
+  string(REPLACE "." "\\." VERSION_RE "${VERSION}")
+  if(NOT REFS MATCHES "(\\(|, )tag: v${VERSION_RE}(\\)|, )")
+    set(VERSION "${VERSION}-g${COMMIT}")
+  endif()
+  configure_file("src/version.h.in" "version/version.h")
+  add_custom_target(version ALL)
+else()
+  find_package(Git QUIET)
+  if(Git_FOUND OR GIT_FOUND)
+    message(STATUS "Found Git: ${GIT_EXECUTABLE}")
+    add_custom_target(version ALL "${CMAKE_COMMAND}" "-D" "VERSION=${VERSION}" "-D" "GIT=${GIT_EXECUTABLE}" "-D" "TO=${CMAKE_BINARY_DIR}/version/version.h" "-P" "src/version.cmake" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  else()
+    message(STATUS "WARNING: Git was not found!")
+    set(VERSION "${VERSION}-unknown")
+    configure_file("src/version.h.in" "version/version.h")
+    add_custom_target(version ALL)
+  endif()
+endif()
 
-const uint64_t CRYPTONOTE_LOCKED_TX_ALLOWED_DELTA_BLOCKS     = 1;
-const uint64_t CRYPTONOTE_LOCKED_TX_ALLOWED_DELTA_SECONDS    = DIFFICULTY_TARGET * CRYPTONOTE_LOCKED_TX_ALLOWED_DELTA_BLOCKS;
-
-const uint64_t CRYPTONOTE_MEMPOOL_TX_LIVETIME                = 60 * 60 * 24;     //seconds, one day
-const uint64_t CRYPTONOTE_MEMPOOL_TX_FROM_ALT_BLOCK_LIVETIME = 60 * 60 * 24 * 7; //seconds, one week
-const uint64_t CRYPTONOTE_NUMBER_OF_PERIODS_TO_FORGET_TX_DELETED_FROM_POOL = 7;  // CRYPTONOTE_NUMBER_OF_PERIODS_TO_FORGET_TX_DELETED_FROM_POOL * CRYPTONOTE_MEMPOOL_TX_LIVETIME = time to forget tx
-
-const size_t   FUSION_TX_MAX_SIZE                            = CRYPTONOTE_BLOCK_GRANTED_FULL_REWARD_ZONE * 30 / 100;
-const size_t   FUSION_TX_MIN_INPUT_COUNT                     = 12;
-const size_t   FUSION_TX_MIN_IN_OUT_COUNT_RATIO              = 4;
-
-const char     CRYPTONOTE_BLOCKS_FILENAME[]                  = "blocks.dat";
-const char     CRYPTONOTE_BLOCKINDEXES_FILENAME[]            = "blockindexes.dat";
-const char     CRYPTONOTE_BLOCKSCACHE_FILENAME[]             = "blockscache.dat";
-const char     CRYPTONOTE_POOLDATA_FILENAME[]                = "poolstate.bin";
-const char     P2P_NET_DATA_FILENAME[]                       = "p2pstate.bin";
-const char     CRYPTONOTE_BLOCKCHAIN_INDICES_FILENAME[]      = "blockchainindices.dat";
-const char     MINER_CONFIG_FILE_NAME[]                      = "miner_conf.json";
-} // parameters
-
-//TODO Put here the name of your currency
-const char     CRYPTONOTE_NAME[]                             = "";
-const char     GENESIS_COINBASE_TX_HEX[]                     = "";
-
-const uint8_t  CURRENT_TRANSACTION_VERSION                   =  1;
-const uint8_t  BLOCK_MAJOR_VERSION_1                         =  1;
-const uint8_t  BLOCK_MINOR_VERSION_0                         =  0;
-
-const size_t   BLOCKS_IDS_SYNCHRONIZING_DEFAULT_COUNT        =  10000;  //by default, blocks ids count in synchronizing
-const size_t   BLOCKS_SYNCHRONIZING_DEFAULT_COUNT            =  200;    //by default, blocks count in blocks downloading
-const size_t   COMMAND_RPC_GET_BLOCKS_FAST_MAX_COUNT         =  1000;
-
-//TODO This port will be used by the daemon to establish connections with p2p network
-const int      P2P_DEFAULT_PORT                              = ;
-//TODO This port will be used by the daemon to interact with simlewallet
-const int      RPC_DEFAULT_PORT                              = ;
-
-const size_t   P2P_LOCAL_WHITE_PEERLIST_LIMIT                =  1000;
-const size_t   P2P_LOCAL_GRAY_PEERLIST_LIMIT                 =  5000;
-
-const size_t   P2P_CONNECTION_MAX_WRITE_BUFFER_SIZE          = 16 * 1024 * 1024; // 16 MB
-const uint32_t P2P_DEFAULT_CONNECTIONS_COUNT                 = 8;
-const size_t   P2P_DEFAULT_WHITELIST_CONNECTIONS_PERCENT     = 70;
-const uint32_t P2P_DEFAULT_HANDSHAKE_INTERVAL                = 60;            // seconds
-const uint32_t P2P_DEFAULT_PACKET_MAX_SIZE                   = 50000000;      // 50000000 bytes maximum packet size
-const uint32_t P2P_DEFAULT_PEERS_IN_HANDSHAKE                = 250;
-const uint32_t P2P_DEFAULT_CONNECTION_TIMEOUT                = 5000;          // 5 seconds
-const uint32_t P2P_DEFAULT_PING_CONNECTION_TIMEOUT           = 2000;          // 2 seconds
-const uint64_t P2P_DEFAULT_INVOKE_TIMEOUT                    = 60 * 2 * 1000; // 2 minutes
-const size_t   P2P_DEFAULT_HANDSHAKE_INVOKE_TIMEOUT          = 5000;          // 5 seconds
-const char     P2P_STAT_TRUSTED_PUB_KEY[]                    = "8f80f9a5a434a9f1510d13336228debfee9c918ce505efe225d8c94d045fa115";
-
-//TODO Add here your network seed nodes
-const std::initializer_list<const char*> SEED_NODES = {
-  //"your_seed_ip1.com:8080",
-  //"your_seed_ip2.com:8080",
-};
-
-struct CheckpointData {
-  uint32_t height;
-  const char* blockId;
-};
-
-#ifdef __GNUC__
-__attribute__((unused))
-#endif
-
-// You may add here other checkpoints using the following format:
-// {<block height>, "<block hash>"},
-const std::initializer_list<CheckpointData> CHECKPOINTS = {
-  //{ 10000, "84b6345731e2702cdaadc6ce5e5238c4ca5ecf48e3447136b2ed829b8a95f3ad" },
-};
-} // CryptoNote
-
-#define ALLOW_DEBUG_COMMANDS
+add_subdirectory(external)
+add_subdirectory(src)
+add_subdirectory(tests)
